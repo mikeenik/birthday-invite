@@ -54,7 +54,7 @@ function App() {
 
     if (!googleScriptUrl) {
       setIsSubmitting(false)
-      setSubmitError('Не задан URL Google Apps Script (VITE_GOOGLE_SCRIPT_URL).')
+      setSubmitError('Не задан VITE_GOOGLE_SCRIPT_URL. Для GitHub Pages добавь Repository secret: VITE_GOOGLE_SCRIPT_URL.')
       return
     }
 

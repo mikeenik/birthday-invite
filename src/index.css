@@ -7,11 +7,7 @@ body {
   min-height: 100vh;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     sans-serif;
-  background-color: #f8fafc;
-  background-image: url('/IMG_3888.jpg');
-  background-repeat: repeat;
-  background-position: top left;
-  background-size: 280px auto;
+  background-color: #daff8b;
   color: #111827;
 }
 

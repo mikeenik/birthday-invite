@@ -3,13 +3,13 @@
   margin: 0 auto;
   padding: 32px 20px;
   display: flex;
+  flex-direction: column;
   gap: 24px;
   align-items: start;
 }
 
 @media (max-width: 840px) {
   .page {
-    flex-direction: column;
     padding: 20px 14px;
   }
 }
