@@ -1,0 +1,135 @@
+.page {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  padding: 32px 20px;
+  display: flex;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 840px) {
+  .page {
+    flex-direction: column;
+    padding: 20px 14px;
+  }
+}
+
+.invite-card,
+.rsvp-card {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
+  padding: 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.eyebrow {
+  color: #7c3aed;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.details {
+  font-size: 1.1rem;
+  margin: 8px 0 14px;
+  color: #111827;
+}
+
+.description {
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.rsvp-card h2 {
+  margin-top: 0;
+  margin-bottom: 14px;
+}
+
+form {
+  display: grid;
+  gap: 14px;
+}
+
+label,
+legend {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+input[type='text'],
+textarea {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 1rem;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+fieldset {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  margin: 0;
+}
+
+.radio-option,
+.checkbox-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-weight: 500;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+}
+
+button[type='submit'] {
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #7c3aed, #ec4899);
+  color: white;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 12px 18px;
+  cursor: pointer;
+}
+
+button[type='submit']:hover {
+  opacity: 0.95;
+}
+
+button[type='submit']:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.success-message {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #ecfeff;
+  border: 1px solid #67e8f9;
+  color: #0f766e;
+}
+
+.error-message {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #9f1239;
+}
