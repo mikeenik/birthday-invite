@@ -14,6 +14,7 @@
   }
 }
 
+.notice-card,
 .invite-card,
 .rsvp-card {
   background: #ffffff;
@@ -22,6 +23,31 @@
   padding: 24px;
   width: 100%;
   box-sizing: border-box;
+}
+
+.notice-card {
+  text-align: center;
+}
+
+.rainbow-text {
+  margin: 0;
+  font-size: clamp(1rem, 2.5vw, 1.2rem);
+  font-weight: 600;
+  line-height: 1.5;
+  background: linear-gradient(
+    90deg,
+    #e53935,
+    #fb8c00,
+    #fdd835,
+    #43a047,
+    #1e88e5,
+    #8e24aa,
+    #e53935
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .eyebrow {
