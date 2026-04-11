@@ -191,17 +191,24 @@ function formatDrinksCell(value) {
   return String(value);
 }
 
+const EMPTY_FORM = {
+  guestName: "",
+  attendance: "",
+  drinks: [],
+  comment: "",
+  uncertaintyLevel: 0,
+};
+
 function App() {
   const googleScriptUrl = normalizeGoogleScriptUrl(
     import.meta.env.VITE_GOOGLE_SCRIPT_URL || "",
   );
-  const [formData, setFormData] = useState({
-    guestName: "",
-    attendance: "",
+  const [formData, setFormData] = useState(() => ({
+    ...EMPTY_FORM,
     drinks: [],
-    comment: "",
-    uncertaintyLevel: 0,
-  });
+  }));
+  /** Данные последней успешной отправки (форма после неё сбрасывается) */
+  const [lastSubmitInfo, setLastSubmitInfo] = useState(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -223,7 +230,7 @@ function App() {
   const showBlockUncertainty = nameOk && formData.attendance === "maybe";
   const showBlockDecline = nameOk && formData.attendance === "no";
   const showGagAfterSubmit =
-    isSubmitted && formData.attendance === "no";
+    isSubmitted && lastSubmitInfo?.attendance === "no";
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
@@ -307,6 +314,23 @@ function App() {
         },
         body: JSON.stringify(payload),
       });
+      const att = String(payload.attendance || "");
+      const uncertaintyForMessage =
+        att === "maybe"
+          ? Math.min(
+              10,
+              Math.max(
+                0,
+                Number.parseInt(String(payload.maybeFollowUp ?? "0"), 10) || 0,
+              ),
+            )
+          : formData.uncertaintyLevel;
+      setLastSubmitInfo({
+        guestName: String(payload.guestName || "").trim(),
+        attendance: att,
+        uncertaintyLevel: uncertaintyForMessage,
+      });
+      setFormData({ ...EMPTY_FORM, drinks: [] });
       setIsSubmitted(true);
       return true;
     } catch {
@@ -568,23 +592,23 @@ function App() {
           </div>
         )}
 
-        {isSubmitted && (
+        {isSubmitted && lastSubmitInfo && (
           <div className="success-message" role="status" aria-live="polite">
             {showGagAfterSubmit ? (
               <>
-                Записано. Спасибо за честность, {formData.guestName}!
+                Записано. Спасибо за честность, {lastSubmitInfo.guestName}!
                 <br />
                 (данные отправлены в таблицу)
               </>
             ) : (
               <>
-                Спасибо, {formData.guestName}! Ответ записан.
+                Спасибо, {lastSubmitInfo.guestName}! Ответ записан.
                 <br />
                 Статус:{" "}
-                {formData.attendance === "yes"
+                {lastSubmitInfo.attendance === "yes"
                   ? "приду"
-                  : formData.attendance === "maybe"
-                    ? `неуверен. Степень неуверенности: ${formData.uncertaintyLevel} из 10 (значение бегунка)`
+                  : lastSubmitInfo.attendance === "maybe"
+                    ? `неуверен. Степень неуверенности: ${lastSubmitInfo.uncertaintyLevel} из 10 (значение бегунка)`
                     : "не смогу"}
                 .
               </>
