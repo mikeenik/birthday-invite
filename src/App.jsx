@@ -1,30 +1,238 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import invitePhoto from "../IMG_4945.JPG";
 import "./App.css";
+
+const INVITE_DETAILS_MD = `**18 апреля (суббота) в 18:00**
+
+Санкт-Петербург, Московский пр. 97  
+*(вход слева от отеля "Московские Ворота")*
+
+**Буду рада видеть тебя на празднике!**
+
+Пожалуйста, подтверди свой визит ниже и заполни прочие пожелания.`;
+
+function withCacheBuster(url) {
+  const u = String(url).trim();
+  const sep = u.includes("?") ? "&" : "?";
+  return `${u}${sep}_=${Date.now()}`;
+}
+
+/** Снимает префикс XSSI `)]}'` у ответов Google, если есть. */
+function parseGoogleScriptJson(text) {
+  let t = String(text).trim();
+  if (t.startsWith(")]}'")) {
+    const nl = t.indexOf("\n");
+    t = nl >= 0 ? t.slice(nl + 1).trim() : "";
+  }
+  return JSON.parse(t);
+}
+
+/**
+ * Загрузка списка с веб-приложения Google Apps Script.
+ * GET + JSON, при ошибке или пустом rows при наличии данных — JSONP.
+ */
+async function loadVotersFromGoogleScript(baseUrl) {
+  const trimmed = String(baseUrl).trim();
+  if (!trimmed) {
+    throw new Error("Пустой URL скрипта");
+  }
+  if (/\/dev($|\?)/i.test(trimmed)) {
+    throw new Error(
+      "Используй URL деплоя с /exec, а не /dev (Deploy → Web app → скопируй ссылку на exec).",
+    );
+  }
+
+  const urlBusted = withCacheBuster(trimmed);
+
+  const tryFetchJson = async () => {
+    const res = await fetch(urlBusted, {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store",
+      credentials: "omit",
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    try {
+      return parseGoogleScriptJson(text);
+    } catch {
+      throw new Error("Ответ не JSON (проверь, что в Apps Script есть doGet и новый деплой).");
+    }
+  };
+
+  let data;
+  try {
+    data = await tryFetchJson();
+  } catch {
+    return jsonpGoogleScript(withCacheBuster(trimmed));
+  }
+
+  if (!data || typeof data !== "object") {
+    return jsonpGoogleScript(withCacheBuster(trimmed));
+  }
+
+  // Иногда fetch отдаёт устаревший/пустой JSON; JSONP с тем же URL часто возвращает полный список
+  if (
+    data.ok &&
+    Array.isArray(data.rows) &&
+    data.rows.length === 0
+  ) {
+    try {
+      const viaJsonp = await jsonpGoogleScript(withCacheBuster(trimmed));
+      if (
+        viaJsonp &&
+        viaJsonp.ok &&
+        Array.isArray(viaJsonp.rows) &&
+        viaJsonp.rows.length > 0
+      ) {
+        return viaJsonp;
+      }
+    } catch {
+      // оставляем data
+    }
+  }
+
+  return data;
+}
+
+function jsonpGoogleScript(url) {
+  return new Promise((resolve, reject) => {
+    const cb = `rsvpJsonp${Date.now()}${Math.floor(Math.random() * 1e9)}`;
+    const script = document.createElement("script");
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(
+        new Error(
+          "Таймаут JSONP: открой URL скрипта в браузере с ?callback=test — должен вернуться JS. Заново задеплой Apps Script с doGet.",
+        ),
+      );
+    }, 25000);
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[cb];
+      if (script.parentNode) script.parentNode.removeChild(script);
+    }
+    window[cb] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+    const sep = url.includes("?") ? "&" : "?";
+    script.src = `${url}${sep}callback=${encodeURIComponent(cb)}`;
+    script.onerror = () => {
+      cleanup();
+      reject(
+        new Error(
+          "Скрипт списка не загрузился: проверь URL (/exec), блокировщики рекламы и новый деплой с функцией doGet.",
+        ),
+      );
+    };
+    document.head.appendChild(script);
+  });
+}
+
+function formatVoteLabel(row) {
+  const o = row.outcome || "";
+  if (o === "declined_gag") return "Не смогу (шутка)";
+  if (o === "maybe_tease_dont_gag") return "Сомнения → «не делать» (шутка)";
+  if (o === "rsvp_yes_attending") return "Приду";
+  if (o === "rsvp_maybe_attending") return "Приду (сомневался)";
+  const att = row.attendance || "";
+  if (att === "yes") return "Приду";
+  if (att === "maybe") {
+    const u = row.maybeFollowUp;
+    const n = u != null && u !== "" ? Number.parseInt(String(u).trim(), 10) : NaN;
+    const suffix =
+      !Number.isNaN(n) && n >= 0 && n <= 10 ? ` (${n}/10)` : "";
+    return `Пока не уверен(а)${suffix}`;
+  }
+  if (att === "no") return "Не смогу";
+  return o || "—";
+}
+
+function formatCreatedAt(value) {
+  if (value == null || value === "") return "—";
+  try {
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+function formatDrinksCell(value) {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) return value.join(", ");
+  return String(value);
+}
 
 function App() {
   const googleScriptUrl = import.meta.env.VITE_GOOGLE_SCRIPT_URL || "";
   const [formData, setFormData] = useState({
     guestName: "",
-    attendance: "yes",
+    attendance: "",
     drinks: [],
     comment: "",
+    uncertaintyLevel: 0,
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [voters, setVoters] = useState(null);
+  const [votersLoading, setVotersLoading] = useState(false);
+  const [votersError, setVotersError] = useState("");
 
   const drinkOptions = [
-    { id: 'water', label: 'Вода' },
-    { id: 'juice', label: 'Сок' },
-    { id: 'soda', label: 'Газировка' },
-    { id: 'gin', label: 'Виски/Джин' },
-    { id: 'wine', label: 'Вино/Игристое' },
-    {id: 'another', label: 'Другое, напишу в комментарии' },
+    { id: "juice", label: "Сок/Лимонад" },
+    { id: "gin", label: "Виски/Джин" },
+    { id: "wine", label: "Вино/Игристое" },
+    { id: "another", label: "Другое, напишу в комментарии" },
   ];
+
+  const nameOk = formData.guestName.trim().length > 0;
+  const showStep2 = nameOk;
+  const showBlockDrinksAndComment =
+    nameOk && formData.attendance === "yes";
+  const showBlockUncertainty = nameOk && formData.attendance === "maybe";
+  const showGag = nameOk && formData.attendance === "no";
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+    setIsSubmitted(false);
+  };
+
+  const handleAttendanceChange = (event) => {
+    const value = event.target.value;
+    setFormData((prev) => ({
+      ...prev,
+      attendance: value,
+      ...(value === "maybe"
+        ? { drinks: [], comment: "" }
+        : value === "yes"
+          ? { uncertaintyLevel: 0 }
+          : {}),
+    }));
+    setIsSubmitted(false);
+    setSubmitError("");
+
+    if (value === "no" && formData.guestName.trim()) {
+      void submitRsvp({
+        attendance: "no",
+        maybeFollowUp: "",
+        outcome: "declined_gag",
+        drinks: [],
+        comment: "",
+      });
+    }
   };
 
   const handleDrinkToggle = (event) => {
@@ -37,12 +245,24 @@ function App() {
     }));
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
+  const handleUncertaintyChange = (event) => {
+    const value = Number(event.target.value);
+    setFormData((prev) => ({
+      ...prev,
+      uncertaintyLevel: Number.isFinite(value) ? value : 0,
+    }));
+    setIsSubmitted(false);
+  };
+
+  async function submitRsvp(overrides = {}) {
     setSubmitError("");
-    setIsSubmitting(true);
     const payload = {
       ...formData,
+      ...overrides,
+      drinks:
+        overrides.drinks !== undefined ? overrides.drinks : formData.drinks,
+      comment:
+        overrides.comment !== undefined ? overrides.comment : formData.comment,
       createdAt: new Date().toISOString(),
     };
 
@@ -55,17 +275,17 @@ function App() {
         JSON.stringify([...existing, payload]),
       );
     } catch {
-      // If localStorage is unavailable, we still show success in UI.
+      // ignore
     }
 
     if (!googleScriptUrl) {
-      setIsSubmitting(false);
       setSubmitError(
         "Не задан VITE_GOOGLE_SCRIPT_URL. Для GitHub Pages добавь Repository secret: VITE_GOOGLE_SCRIPT_URL.",
       );
-      return;
+      return false;
     }
 
+    setIsSubmitting(true);
     try {
       await fetch(googleScriptUrl, {
         method: "POST",
@@ -75,42 +295,109 @@ function App() {
         },
         body: JSON.stringify(payload),
       });
-
       setIsSubmitted(true);
+      return true;
     } catch {
-      setSubmitError("Не удалось отправить в Google Sheets. Попробуй еще раз.");
+      setSubmitError(
+        "Не удалось отправить в Google Sheets. Попробуй еще раз.",
+      );
+      return false;
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!showBlockDrinksAndComment && !showBlockUncertainty) return;
+    if (!formData.guestName.trim()) {
+      setSubmitError("Сначала введи имя.");
+      return;
+    }
+
+    if (formData.attendance === "yes") {
+      await submitRsvp({
+        maybeFollowUp: "",
+        outcome: "rsvp_yes_attending",
+      });
+      return;
+    }
+
+    if (formData.attendance === "maybe") {
+      await submitRsvp({
+        maybeFollowUp: String(formData.uncertaintyLevel),
+        outcome: "rsvp_maybe_attending",
+        drinks: [],
+        comment: "",
+      });
+    }
   };
+
+  const fetchVoters = useCallback(async () => {
+    if (!googleScriptUrl) {
+      setVotersError("Нет URL скрипта.");
+      return;
+    }
+    setVotersLoading(true);
+    setVotersError("");
+    try {
+      const data = await loadVotersFromGoogleScript(googleScriptUrl);
+      if (!data || !data.ok) {
+        throw new Error(
+          (data && data.error) || "Сервер вернул ошибку (ok: false)",
+        );
+      }
+      setVoters(Array.isArray(data.rows) ? data.rows : []);
+    } catch (e) {
+      setVotersError(e instanceof Error ? e.message : "Ошибка загрузки");
+      setVoters([]);
+    } finally {
+      setVotersLoading(false);
+    }
+  }, [googleScriptUrl]);
+
+  useEffect(() => {
+    if (!isSubmitted || !googleScriptUrl) return;
+    const t = window.setTimeout(() => {
+      void fetchVoters();
+    }, 1800);
+    return () => window.clearTimeout(t);
+  }, [isSubmitted, googleScriptUrl, fetchVoters]);
 
   return (
     <main className="page">
-      <section className="notice-card" aria-label="Заметка">
-        <p className="rainbow-text">
-          Телеграм заблокировали, поэтому давайте так
-        </p>
+      <section className="invite-card invite-card--title" aria-label="Заголовок">
+        <h1 className="invite-title">
+          <span className="invite-title__part invite-title__part--left">
+            Lera's
+          </span>
+          <span className="invite-title__part invite-title__part--center">
+            Birthday
+          </span>
+          <span className="invite-title__part invite-title__part--right">
+            Party
+          </span>
+        </h1>
       </section>
 
-      <section className="invite-card">
-        <p className="eyebrow">Приглашение</p>
-        <h1>Lera's Birthday Party</h1>
-        <p className="details">
-          Встречаемся 18 апреля (суббота) в 18:00
-          <br />
-          Санкт-Петербург, Московский пр. 97 (вход в лофт слева от отеля Московские Ворота) 
-        </p>
-        <p className="description">
-          Буду рада видеть тебя на празднике!
-          <br />
-          Пожалуйста, подтверди свой визит ниже и заполни прочие пожелания.
-        </p>
+      <section className="invite-card invite-card--details" aria-label="Детали встречи">
+        <div className="invite-columns">
+          <img
+            className="invite-columns__photo"
+            src={invitePhoto}
+            alt=""
+            width={640}
+            height={640}
+          />
+          <div className="invite-columns__main invite-md">
+            <ReactMarkdown>{INVITE_DETAILS_MD}</ReactMarkdown>
+          </div>
+        </div>
       </section>
 
       <section className="rsvp-card">
-        <h2>Подтверждение участия</h2>
         <form onSubmit={handleSubmit}>
-          <label htmlFor="guestName">Твое имя</label>
+          <label htmlFor="guestName">Кто ты?</label>
           <input
             id="guestName"
             name="guestName"
@@ -118,74 +405,127 @@ function App() {
             placeholder="Например, Владимир Путин"
             value={formData.guestName}
             onChange={handleInputChange}
-            required
+            autoComplete="name"
           />
 
-          <fieldset>
-            <legend>Сможешь прийти?</legend>
-            <label className="radio-option">
-              <input
-                type="radio"
-                name="attendance"
-                value="yes"
-                checked={formData.attendance === "yes"}
-                onChange={handleInputChange}
-              />
-              Да, буду
-            </label>
-            <label className="radio-option">
-              <input
-                type="radio"
-                name="attendance"
-                value="maybe"
-                checked={formData.attendance === "maybe"}
-                onChange={handleInputChange}
-              />
-              Пока не уверен(а)
-            </label>
-            <label className="radio-option">
-              <input
-                type="radio"
-                name="attendance"
-                value="no"
-                checked={formData.attendance === "no"}
-                onChange={handleInputChange}
-              />
-              Не смогу
-            </label>
-          </fieldset>
+          {showStep2 && (
+            <fieldset>
+              <legend>Шо ты?</legend>
+              <label className="radio-option">
+                <input
+                  type="radio"
+                  name="attendance"
+                  value="yes"
+                  checked={formData.attendance === "yes"}
+                  onChange={handleAttendanceChange}
+                />
+                Да, буду
+              </label>
+              <label className="radio-option">
+                <input
+                  type="radio"
+                  name="attendance"
+                  value="maybe"
+                  checked={formData.attendance === "maybe"}
+                  onChange={handleAttendanceChange}
+                />
+                Пока не уверен(а)
+              </label>
+              <label className="radio-option">
+                <input
+                  type="radio"
+                  name="attendance"
+                  value="no"
+                  checked={formData.attendance === "no"}
+                  onChange={handleAttendanceChange}
+                />
+                Не смогу
+              </label>
+            </fieldset>
+          )}
 
-          <fieldset>
-            <legend>Какие напитки предпочитаешь?</legend>
-            <div className="checkbox-grid">
-              {drinkOptions.map((drink) => (
-                <label key={drink.id} className="checkbox-option">
+          {showBlockDrinksAndComment && (
+            <>
+              <fieldset>
+                <legend>Какие напитки предпочитаешь?</legend>
+                <div className="checkbox-grid">
+                  {drinkOptions.map((drink) => (
+                    <label key={drink.id} className="checkbox-option">
+                      <input
+                        type="checkbox"
+                        value={drink.label}
+                        checked={formData.drinks.includes(drink.label)}
+                        onChange={handleDrinkToggle}
+                      />
+                      {drink.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <label htmlFor="comment">Комментарий по напиткам</label>
+              <textarea
+                id="comment"
+                name="comment"
+                rows="4"
+                placeholder="Например: без сахара, без алкоголя и т.д."
+                value={formData.comment}
+                onChange={handleInputChange}
+              />
+
+              <button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Отправка..." : "Отправить ответ"}
+              </button>
+            </>
+          )}
+
+          {showBlockUncertainty && (
+            <>
+              <fieldset className="uncertainty-block">
+                <legend>Степень неуверенности</legend>
+                <div className="uncertainty-slider-stack">
                   <input
-                    type="checkbox"
-                    value={drink.label}
-                    checked={formData.drinks.includes(drink.label)}
-                    onChange={handleDrinkToggle}
+                    className="uncertainty-slider"
+                    type="range"
+                    name="uncertaintyLevel"
+                    min={0}
+                    max={10}
+                    step={1}
+                    value={formData.uncertaintyLevel}
+                    onChange={handleUncertaintyChange}
+                    aria-valuemin={0}
+                    aria-valuemax={10}
+                    aria-valuenow={formData.uncertaintyLevel}
+                    aria-label="Степень неуверенности от 0 до 10"
                   />
-                  {drink.label}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+                  <div className="uncertainty-slider-labels">
+                    <span className="uncertainty-slider-labels__left">Не уверен</span>
+                    <span className="uncertainty-slider-labels__right">
+                      Не уверен что не уверен
+                    </span>
+                  </div>
+                </div>
+              </fieldset>
 
-          <label htmlFor="comment">Комментарий по напиткам</label>
-          <textarea
-            id="comment"
-            name="comment"
-            rows="4"
-            placeholder="Например: без сахара, без алкоголя и т.д."
-            value={formData.comment}
-            onChange={handleInputChange}
-          />
-
-          <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Отправка..." : "Отправить ответ"}
-          </button>
+              <button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Отправка..." : "Отправить ответ"}
+              </button>
+            </>
+          )}
         </form>
+
+        {showGag && (
+          <div className="gag-block" aria-live="polite">
+            <div className="fireworks" aria-hidden="true">
+              <span className="fireworks__burst fireworks__burst--1" />
+              <span className="fireworks__burst fireworks__burst--2" />
+              <span className="fireworks__burst fireworks__burst--3" />
+              <span className="fireworks__burst fireworks__burst--4" />
+            </div>
+            <p className="gag-block__you">You are</p>
+            <p className="gag-block__gay rainbow-text gag-rainbow">VONYUCHKA</p>
+          </div>
+        )}
 
         {submitError && (
           <div className="error-message" role="alert">
@@ -195,18 +535,81 @@ function App() {
 
         {isSubmitted && (
           <div className="success-message" role="status" aria-live="polite">
-            Спасибо, {formData.guestName}! Ответ записан.
-            <br />
-            Статус:{" "}
-            {formData.attendance === "yes"
-              ? "приду"
-              : formData.attendance === "maybe"
-                ? "пока не уверен(а)"
-                : "не смогу"}
-            .
+            {showGag ? (
+              <>
+                Записано. Спасибо за честность, {formData.guestName}!
+                <br />
+                (данные отправлены в таблицу)
+              </>
+            ) : (
+              <>
+                Спасибо, {formData.guestName}! Ответ записан.
+                <br />
+                Статус:{" "}
+                {formData.attendance === "yes"
+                  ? "приду"
+                  : formData.attendance === "maybe"
+                    ? `приду (был сомневающийся) — степень неуверенности ${formData.uncertaintyLevel}/10`
+                    : "не смогу"}
+                .
+              </>
+            )}
           </div>
         )}
       </section>
+
+      {isSubmitted && googleScriptUrl && (
+        <section className="rsvp-card voters-card" aria-labelledby="voters-heading">
+          <h2 id="voters-heading" className="voters-card__title">
+            Кто отметился
+          </h2>
+          {votersLoading && (
+            <p className="voters-card__loading">Загружаем ответы…</p>
+          )}
+          {votersError && (
+            <div className="error-message" role="alert">
+              {votersError}
+            </div>
+          )}
+          {!votersLoading && voters && voters.length === 0 && !votersError && (
+            <p className="voters-card__empty">Пока нет строк в таблице.</p>
+          )}
+          {!votersLoading && voters && voters.length > 0 && (
+            <div className="voters-table-wrap">
+              <table className="voters-table">
+                <thead>
+                  <tr>
+                    <th>Имя</th>
+                    <th>Ответ</th>
+                    <th>Напитки</th>
+                    <th>Время</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {voters.map((row, idx) => (
+                    <tr key={`${row.createdAt}-${row.guestName}-${idx}`}>
+                      <td>{row.guestName || "—"}</td>
+                      <td>{formatVoteLabel(row)}</td>
+                      <td className="voters-table__drinks">
+                        {formatDrinksCell(row.drinks)}
+                      </td>
+                      <td>{formatCreatedAt(row.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <button
+            type="button"
+            className="button-secondary voters-card__refresh"
+            onClick={() => void fetchVoters()}
+            disabled={votersLoading}
+          >
+            {votersLoading ? "Обновление…" : "Обновить список"}
+          </button>
+        </section>
+      )}
     </main>
   );
 }
