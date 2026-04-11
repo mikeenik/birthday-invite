@@ -30,6 +30,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Repository secret: полный URL веб-приложения Apps Script …/exec (без пробелов в конце)
       - name: Build
         env:
           VITE_GOOGLE_SCRIPT_URL: ${{ secrets.VITE_GOOGLE_SCRIPT_URL }}

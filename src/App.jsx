@@ -18,6 +18,14 @@ function withCacheBuster(url) {
   return `${u}${sep}_=${Date.now()}`;
 }
 
+/** Убирает пробелы, переносы и невидимые символы (частая ошибка в GitHub Secret). */
+function normalizeGoogleScriptUrl(url) {
+  return String(url ?? "")
+    .trim()
+    .replace(/\u200B/g, "")
+    .replace(/[\r\n]+/g, "");
+}
+
 /** Снимает префикс XSSI `)]}'` у ответов Google, если есть. */
 function parseGoogleScriptJson(text) {
   let t = String(text).trim();
@@ -30,12 +38,14 @@ function parseGoogleScriptJson(text) {
 
 /**
  * Загрузка списка с веб-приложения Google Apps Script.
- * GET + JSON, при ошибке или пустом rows при наличии данных — JSONP.
+ * Параллельно: GET (JSON) и JSONP — что сработает первым (на проде CORS часто рвёт fetch, JSONP может пройти).
  */
 async function loadVotersFromGoogleScript(baseUrl) {
-  const trimmed = String(baseUrl).trim();
+  const trimmed = normalizeGoogleScriptUrl(baseUrl);
   if (!trimmed) {
-    throw new Error("Пустой URL скрипта");
+    throw new Error(
+      "Пустой URL скрипта. Для GitHub Pages в репозитории нужен Secret VITE_GOOGLE_SCRIPT_URL и новый деплой.",
+    );
   }
   if (/\/dev($|\?)/i.test(trimmed)) {
     throw new Error(
@@ -51,6 +61,7 @@ async function loadVotersFromGoogleScript(baseUrl) {
       mode: "cors",
       cache: "no-store",
       credentials: "omit",
+      signal: AbortSignal.timeout(20000),
     });
     const text = await res.text();
     if (!res.ok) {
@@ -59,27 +70,30 @@ async function loadVotersFromGoogleScript(baseUrl) {
     try {
       return parseGoogleScriptJson(text);
     } catch {
-      throw new Error("Ответ не JSON (проверь, что в Apps Script есть doGet и новый деплой).");
+      throw new Error(
+        "Ответ не JSON (проверь doGet и новый деплой веб-приложения).",
+      );
     }
   };
 
   let data;
   try {
-    data = await tryFetchJson();
-  } catch {
-    return jsonpGoogleScript(withCacheBuster(trimmed));
+    data = await Promise.any([tryFetchJson(), jsonpGoogleScript(urlBusted)]);
+  } catch (e) {
+    const hint =
+      "Проверь: URL заканчивается на /exec; в GitHub → Settings → Secrets добавлен VITE_GOOGLE_SCRIPT_URL; в Apps Script заново разверни веб-приложение (доступ: все); отключи блокировку script.google.com для сайта.";
+    if (e instanceof AggregateError) {
+      throw new Error(`Список не загрузился (ни fetch, ни JSONP). ${hint}`);
+    }
+    throw e instanceof Error ? e : new Error(String(e));
   }
 
   if (!data || typeof data !== "object") {
-    return jsonpGoogleScript(withCacheBuster(trimmed));
+    throw new Error("Пустой ответ сервера.");
   }
 
-  // Иногда fetch отдаёт устаревший/пустой JSON; JSONP с тем же URL часто возвращает полный список
-  if (
-    data.ok &&
-    Array.isArray(data.rows) &&
-    data.rows.length === 0
-  ) {
+  // Иногда fetch отдаёт пустой rows; повтор только через JSONP
+  if (data.ok && Array.isArray(data.rows) && data.rows.length === 0) {
     try {
       const viaJsonp = await jsonpGoogleScript(withCacheBuster(trimmed));
       if (
@@ -121,15 +135,16 @@ function jsonpGoogleScript(url) {
     };
     const sep = url.includes("?") ? "&" : "?";
     script.src = `${url}${sep}callback=${encodeURIComponent(cb)}`;
+    script.async = true;
     script.onerror = () => {
       cleanup();
       reject(
         new Error(
-          "Скрипт списка не загрузился: проверь URL (/exec), блокировщики рекламы и новый деплой с функцией doGet.",
+          "JSONP: скрипт не загрузился (URL /exec, блокировщики, деплой doGet, секрет VITE_GOOGLE_SCRIPT_URL).",
         ),
       );
     };
-    document.head.appendChild(script);
+    (document.body || document.head).appendChild(script);
   });
 }
 
@@ -175,7 +190,9 @@ function formatDrinksCell(value) {
 }
 
 function App() {
-  const googleScriptUrl = import.meta.env.VITE_GOOGLE_SCRIPT_URL || "";
+  const googleScriptUrl = normalizeGoogleScriptUrl(
+    import.meta.env.VITE_GOOGLE_SCRIPT_URL || "",
+  );
   const [formData, setFormData] = useState({
     guestName: "",
     attendance: "",
@@ -202,7 +219,9 @@ function App() {
   const showBlockDrinksAndComment =
     nameOk && formData.attendance === "yes";
   const showBlockUncertainty = nameOk && formData.attendance === "maybe";
-  const showGag = nameOk && formData.attendance === "no";
+  const showBlockDecline = nameOk && formData.attendance === "no";
+  const showGagAfterSubmit =
+    isSubmitted && formData.attendance === "no";
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
@@ -220,19 +239,10 @@ function App() {
         : value === "yes"
           ? { uncertaintyLevel: 0 }
           : {}),
+      ...(value === "no" ? { drinks: [], comment: "" } : {}),
     }));
     setIsSubmitted(false);
     setSubmitError("");
-
-    if (value === "no" && formData.guestName.trim()) {
-      void submitRsvp({
-        attendance: "no",
-        maybeFollowUp: "",
-        outcome: "declined_gag",
-        drinks: [],
-        comment: "",
-      });
-    }
   };
 
   const handleDrinkToggle = (event) => {
@@ -309,7 +319,13 @@ function App() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!showBlockDrinksAndComment && !showBlockUncertainty) return;
+    if (
+      !showBlockDrinksAndComment &&
+      !showBlockUncertainty &&
+      !showBlockDecline
+    ) {
+      return;
+    }
     if (!formData.guestName.trim()) {
       setSubmitError("Сначала введи имя.");
       return;
@@ -327,6 +343,17 @@ function App() {
       await submitRsvp({
         maybeFollowUp: String(formData.uncertaintyLevel),
         outcome: "rsvp_maybe_attending",
+        drinks: [],
+        comment: "",
+      });
+      return;
+    }
+
+    if (formData.attendance === "no") {
+      await submitRsvp({
+        attendance: "no",
+        maybeFollowUp: "",
+        outcome: "declined_gag",
         drinks: [],
         comment: "",
       });
@@ -402,7 +429,7 @@ function App() {
             id="guestName"
             name="guestName"
             type="text"
-            placeholder="Например, Владимир Путин"
+            placeholder="Например: Владимир Путин"
             value={formData.guestName}
             onChange={handleInputChange}
             autoComplete="name"
@@ -499,9 +526,9 @@ function App() {
                     aria-label="Степень неуверенности от 0 до 10"
                   />
                   <div className="uncertainty-slider-labels">
-                    <span className="uncertainty-slider-labels__left">Не уверен</span>
+                    <span className="uncertainty-slider-labels__left">Не уверен что не уверен</span>
                     <span className="uncertainty-slider-labels__right">
-                      Не уверен что не уверен
+                      Точно не уверен
                     </span>
                   </div>
                 </div>
@@ -512,9 +539,15 @@ function App() {
               </button>
             </>
           )}
+
+          {showBlockDecline && (
+            <button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Отправка..." : "Отправить ответ"}
+            </button>
+          )}
         </form>
 
-        {showGag && (
+        {showGagAfterSubmit && (
           <div className="gag-block" aria-live="polite">
             <div className="fireworks" aria-hidden="true">
               <span className="fireworks__burst fireworks__burst--1" />
@@ -535,7 +568,7 @@ function App() {
 
         {isSubmitted && (
           <div className="success-message" role="status" aria-live="polite">
-            {showGag ? (
+            {showGagAfterSubmit ? (
               <>
                 Записано. Спасибо за честность, {formData.guestName}!
                 <br />
@@ -549,7 +582,7 @@ function App() {
                 {formData.attendance === "yes"
                   ? "приду"
                   : formData.attendance === "maybe"
-                    ? `приду (был сомневающийся) — степень неуверенности ${formData.uncertaintyLevel}/10`
+                    ? `неуверен. Степень неуверенности: ${formData.uncertaintyLevel} из 10 (значение бегунка)`
                     : "не смогу"}
                 .
               </>

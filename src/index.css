@@ -28,7 +28,8 @@ body::before {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background-image: url("IMG_4949.JPG");
+  /* Файл в корне репозитория; ../ чтобы Vite подхватил и положил в dist/assets */
+  background-image: url("../IMG_4949.JPG");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
