@@ -149,20 +149,22 @@ function jsonpGoogleScript(url) {
 }
 
 function formatVoteLabel(row) {
-  const o = row.outcome || "";
+  const o = String(row.outcome || "");
+  const att = String(row.attendance || "");
+
   if (o === "declined_gag") return "Не смогу (шутка)";
   if (o === "maybe_tease_dont_gag") return "Сомнения → «не делать» (шутка)";
-  if (o === "rsvp_yes_attending") return "Приду";
-  if (o === "rsvp_maybe_attending") return "Приду (сомневался)";
-  const att = row.attendance || "";
-  if (att === "yes") return "Приду";
-  if (att === "maybe") {
+  if (o === "rsvp_yes_attending" || att === "yes") return "Приду";
+
+  // maybe в таблице + rsvp_maybe_attending из формы — один текст, без «Приду (сомневался)»
+  if (o === "rsvp_maybe_attending" || att === "maybe") {
     const u = row.maybeFollowUp;
     const n = u != null && u !== "" ? Number.parseInt(String(u).trim(), 10) : NaN;
     const suffix =
-      !Number.isNaN(n) && n >= 0 && n <= 10 ? ` (${n}/10)` : "";
-    return `Пока не уверен(а)${suffix}`;
+      !Number.isNaN(n) && n >= 0 && n <= 10 ? ` · ${n}/10` : "";
+    return `Не уверен(а)${suffix}`;
   }
+
   if (att === "no") return "Не смогу";
   return o || "—";
 }
